@@ -6,19 +6,16 @@ from app.logger import logger
 
 
 COZE_CHAT_URL = "https://api.coze.com/v3/chat"
+COZE_RETRIEVE_URL = "https://api.coze.com/v3/chat/retrieve"
 COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/message/list"
 
 
-def ask_coze(
-    user_id: str,
-    message: str
-):
+def ask_coze(user_id: str, message: str):
 
     headers = {
         "Authorization": f"Bearer {COZE_TOKEN}",
         "Content-Type": "application/json"
     }
-
 
     payload = {
         "bot_id": COZE_BOT_ID,
@@ -34,7 +31,6 @@ def ask_coze(
         ]
     }
 
-
     try:
 
         response = requests.post(
@@ -44,30 +40,51 @@ def ask_coze(
             timeout=60
         )
 
-
         data = response.json()
-
 
         logger.info(
             f"Coze RAW response: {data}"
         )
-
 
         if data.get("code") != 0:
             return "Ошибка Coze"
 
 
         chat_id = data["data"]["id"]
+        conversation_id = data["data"]["conversation_id"]
 
 
-        # ждём пока Agent закончит генерацию
-        time.sleep(5)
+        # ждём завершения генерации
+        for _ in range(10):
+
+            time.sleep(2)
+
+            status_response = requests.get(
+                COZE_RETRIEVE_URL,
+                headers=headers,
+                params={
+                    "conversation_id": conversation_id,
+                    "chat_id": chat_id
+                },
+                timeout=60
+            )
+
+            status_data = status_response.json()
+
+            logger.info(
+                f"Coze status: {status_data}"
+            )
+
+
+            if status_data.get("data", {}).get("status") == "completed":
+                break
 
 
         messages_response = requests.get(
             COZE_MESSAGE_URL,
             headers=headers,
             params={
+                "conversation_id": conversation_id,
                 "chat_id": chat_id
             },
             timeout=60
@@ -75,7 +92,6 @@ def ask_coze(
 
 
         messages_data = messages_response.json()
-
 
         logger.info(
             f"Coze messages: {messages_data}"
@@ -86,13 +102,7 @@ def ask_coze(
             return "Ответ не получен."
 
 
-        messages = messages_data.get(
-            "data",
-            []
-        )
-
-
-        for item in messages:
+        for item in messages_data.get("data", []):
 
             if item.get("role") == "assistant":
 
@@ -111,4 +121,4 @@ def ask_coze(
             f"Coze error: {error}"
         )
 
-        return "Произошла ошибка Coze."
+        return "Ошибка Coze."

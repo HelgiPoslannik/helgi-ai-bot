@@ -25,55 +25,31 @@ telegram_app = (
 )
 
 
-
-async def start_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
 
-    await update.message.reply_text(
-        "Привет! Я ИИ-ассистент по психосоматике.\n\n"
-        "Проверяю доступ к закрытому клубу..."
-    )
-
-
     if await check_subscription(user.id):
-
         await update.message.reply_text(
             "✅ Доступ подтверждён.\n"
             "Задавай свой вопрос."
         )
-
     else:
-
         await update.message.reply_text(
-            "❌ Доступ закрыт.\n\n"
-            "Для использования ассистента "
-            "необходима активная подписка."
+            "❌ Нет активной подписки."
         )
 
 
-
-async def handle_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
-
     text = update.message.text
 
-
     if not await check_subscription(user.id):
-
         await update.message.reply_text(
-            "❌ У тебя нет активной подписки."
+            "❌ Доступ закрыт. Нужна активная подписка."
         )
-
         return
-
 
 
     logger.info(
@@ -92,7 +68,6 @@ async def handle_message(
     )
 
 
-
 telegram_app.add_handler(
     CommandHandler(
         "start",
@@ -109,30 +84,37 @@ telegram_app.add_handler(
 )
 
 
+@app.on_event("startup")
+async def startup():
+
+    await telegram_app.initialize()
+    await telegram_app.start()
+
+    logger.info("Telegram bot started")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+
 
 @app.post("/webhook")
-async def telegram_webhook(
-    request: Request
-):
+async def webhook(request: Request):
 
     data = await request.json()
-
 
     update = Update.de_json(
         data,
         telegram_app.bot
     )
 
-
-    await telegram_app.process_update(
-        update
-    )
-
+    await telegram_app.process_update(update)
 
     return {
         "ok": True
     }
-
 
 
 @app.get("/")

@@ -1,20 +1,18 @@
+import time
 import requests
 
 from app.config import COZE_TOKEN, COZE_BOT_ID
 from app.logger import logger
 
 
-COZE_URL = "https://api.coze.com/v3/chat"
+COZE_CHAT_URL = "https://api.coze.com/v3/chat"
+COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/message/list"
 
 
 def ask_coze(
     user_id: str,
     message: str
 ):
-    """
-    Отправляет сообщение в Coze Agent
-    и получает ответ.
-    """
 
     headers = {
         "Authorization": f"Bearer {COZE_TOKEN}",
@@ -26,7 +24,6 @@ def ask_coze(
         "bot_id": COZE_BOT_ID,
         "user_id": str(user_id),
         "stream": False,
-        "auto_save_history": True,
         "additional_messages": [
             {
                 "role": "user",
@@ -40,71 +37,64 @@ def ask_coze(
     try:
 
         response = requests.post(
-            COZE_URL,
+            COZE_CHAT_URL,
             headers=headers,
             json=payload,
             timeout=60
         )
 
-
-        response.raise_for_status()
-
         data = response.json()
-
 
         logger.info(
             f"Coze RAW response: {data}"
         )
 
 
-        # Здесь будет обработка ответа Coze
-        # после проверки формата API
-
-        return extract_answer(data)
+        if data.get("code") != 0:
+            return "Ошибка Coze"
 
 
-    except Exception as error:
-
-        logger.error(
-            f"Coze error user={user_id}: {error}"
-        )
-
-        return (
-            "Произошла временная ошибка. "
-            "Попробуйте отправить сообщение ещё раз."
-        )
+        conversation_id = data["data"]["conversation_id"]
 
 
+        time.sleep(5)
 
-def extract_answer(data):
 
-    """
-    Извлечение текста ответа Coze.
-    """
-
-    try:
-
-        messages = data.get(
-            "messages",
-            []
+        messages_response = requests.get(
+            COZE_MESSAGE_URL,
+            headers=headers,
+            params={
+                "conversation_id": conversation_id
+            },
+            timeout=60
         )
 
 
-        for message in messages:
+        messages_data = messages_response.json()
 
-            if message.get("role") == "assistant":
 
-                return message.get(
+        logger.info(
+            f"Coze messages: {messages_data}"
+        )
+
+
+        for item in messages_data.get("data", []):
+
+            if item.get("role") == "assistant":
+
+                return item.get(
                     "content",
-                    ""
+                    "Ответ пустой"
                 )
 
 
+        return "Ответ не получен."
+
+
     except Exception as error:
 
         logger.error(
-            f"Extract answer error: {error}"
+            f"Coze error: {error}"
         )
 
-
-    return "Ответ не получен."
+        return "Произошла ошибка Coze."

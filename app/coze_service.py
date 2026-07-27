@@ -53,7 +53,7 @@ def ask_coze(
 
 
         logger.info(
-            f"Coze response user={user_id}"
+            f"Coze RAW response: {data}"
         )
 
 

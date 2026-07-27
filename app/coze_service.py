@@ -24,6 +24,7 @@ def ask_coze(
         "bot_id": COZE_BOT_ID,
         "user_id": str(user_id),
         "stream": False,
+        "auto_save_history": True,
         "additional_messages": [
             {
                 "role": "user",
@@ -43,7 +44,9 @@ def ask_coze(
             timeout=60
         )
 
+
         data = response.json()
+
 
         logger.info(
             f"Coze RAW response: {data}"
@@ -54,9 +57,10 @@ def ask_coze(
             return "Ошибка Coze"
 
 
-        conversation_id = data["data"]["conversation_id"]
+        chat_id = data["data"]["id"]
 
 
+        # ждём пока Agent закончит генерацию
         time.sleep(5)
 
 
@@ -64,7 +68,7 @@ def ask_coze(
             COZE_MESSAGE_URL,
             headers=headers,
             params={
-                "conversation_id": conversation_id
+                "chat_id": chat_id
             },
             timeout=60
         )
@@ -78,13 +82,23 @@ def ask_coze(
         )
 
 
-        for item in messages_data.get("data", []):
+        if messages_data.get("code") != 0:
+            return "Ответ не получен."
+
+
+        messages = messages_data.get(
+            "data",
+            []
+        )
+
+
+        for item in messages:
 
             if item.get("role") == "assistant":
 
                 return item.get(
                     "content",
-                    "Ответ пустой"
+                    "Ответ пустой."
                 )
 
 

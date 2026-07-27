@@ -1,1 +1,143 @@
+from fastapi import FastAPI, Request
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
+from app.config import BOT_TOKEN
+from app.subscription import check_subscription
+from app.coze_service import ask_coze
+from app.logger import logger
+
+
+app = FastAPI()
+
+
+telegram_app = (
+    Application
+    .builder()
+    .token(BOT_TOKEN)
+    .build()
+)
+
+
+
+async def start_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    user = update.effective_user
+
+    await update.message.reply_text(
+        "Привет! Я ИИ-ассистент по психосоматике.\n\n"
+        "Проверяю доступ к закрытому клубу..."
+    )
+
+
+    if await check_subscription(user.id):
+
+        await update.message.reply_text(
+            "✅ Доступ подтверждён.\n"
+            "Задавай свой вопрос."
+        )
+
+    else:
+
+        await update.message.reply_text(
+            "❌ Доступ закрыт.\n\n"
+            "Для использования ассистента "
+            "необходима активная подписка."
+        )
+
+
+
+async def handle_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    user = update.effective_user
+
+    text = update.message.text
+
+
+    if not await check_subscription(user.id):
+
+        await update.message.reply_text(
+            "❌ У тебя нет активной подписки."
+        )
+
+        return
+
+
+
+    logger.info(
+        f"User {user.id}: {text}"
+    )
+
+
+    answer = ask_coze(
+        user_id=user.id,
+        message=text
+    )
+
+
+    await update.message.reply_text(
+        answer
+    )
+
+
+
+telegram_app.add_handler(
+    CommandHandler(
+        "start",
+        start_command
+    )
+)
+
+
+telegram_app.add_handler(
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_message
+    )
+)
+
+
+
+@app.post("/webhook")
+async def telegram_webhook(
+    request: Request
+):
+
+    data = await request.json()
+
+
+    update = Update.de_json(
+        data,
+        telegram_app.bot
+    )
+
+
+    await telegram_app.process_update(
+        update
+    )
+
+
+    return {
+        "ok": True
+    }
+
+
+
+@app.get("/")
+async def home():
+
+    return {
+        "status": "Helgi AI Bot is running"
+    }

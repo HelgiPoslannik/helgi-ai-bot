@@ -7,7 +7,7 @@ from app.logger import logger
 
 COZE_CHAT_URL = "https://api.coze.com/v3/chat"
 COZE_RETRIEVE_URL = "https://api.coze.com/v3/chat/retrieve"
-COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/message/list"
+COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/messages"
 
 
 def ask_coze(user_id: str, message: str):

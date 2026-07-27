@@ -55,51 +55,49 @@ def ask_coze(user_id: str, message: str):
 
 
         # ждём завершения генерации
-        for _ in range(10):
+        for _ in range(15):
 
             time.sleep(2)
 
-            status_response = requests.get(
+            retrieve = requests.get(
                 COZE_RETRIEVE_URL,
                 headers=headers,
                 params={
                     "conversation_id": conversation_id,
                     "chat_id": chat_id
-                },
-                timeout=60
+                }
             )
 
-            status_data = status_response.json()
+            retrieve_data = retrieve.json()
 
             logger.info(
-                f"Coze status: {status_data}"
+                f"Coze retrieve: {retrieve_data}"
             )
 
+            status = retrieve_data.get(
+                "data",
+                {}
+            ).get(
+                "status"
+            )
 
-            if status_data.get("data", {}).get("status") == "completed":
+            if status == "completed":
                 break
 
 
-        messages_response = requests.get(
+        messages = requests.get(
             COZE_MESSAGE_URL,
             headers=headers,
             params={
-                "conversation_id": conversation_id,
-                "chat_id": chat_id
-            },
-            timeout=60
+                "conversation_id": conversation_id
+            }
         )
 
-
-        messages_data = messages_response.json()
+        messages_data = messages.json()
 
         logger.info(
             f"Coze messages: {messages_data}"
         )
-
-
-        if messages_data.get("code") != 0:
-            return "Ответ не получен."
 
 
         for item in messages_data.get("data", []):
@@ -107,8 +105,7 @@ def ask_coze(user_id: str, message: str):
             if item.get("role") == "assistant":
 
                 return item.get(
-                    "content",
-                    "Ответ пустой."
+                    "content"
                 )
 
 

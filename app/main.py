@@ -88,13 +88,20 @@ telegram_app.add_handler(
 async def startup():
 
     await telegram_app.initialize()
+
     await telegram_app.start()
+
+    if telegram_app.updater:
+        await telegram_app.updater.start_polling()
 
     logger.info("Telegram bot started")
 
 
 @app.on_event("shutdown")
 async def shutdown():
+
+    if telegram_app.updater:
+        await telegram_app.updater.stop()
 
     await telegram_app.stop()
     await telegram_app.shutdown()

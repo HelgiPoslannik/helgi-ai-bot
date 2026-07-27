@@ -91,8 +91,9 @@ async def startup():
 
     await telegram_app.start()
 
-    if telegram_app.updater:
-        await telegram_app.updater.start_polling()
+    await telegram_app.updater.start_polling(
+        drop_pending_updates=True
+    )
 
     logger.info("Telegram bot started")
 

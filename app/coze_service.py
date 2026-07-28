@@ -60,13 +60,14 @@ def ask_coze(user_id: str, message: str):
             return "Ошибка Coze."
 
 
+
         chat_id = data["data"]["id"]
 
         conversation_id = data["data"]["conversation_id"]
 
 
 
-        # ждём завершения генерации
+        # Ждём завершения генерации
 
         for i in range(15):
 
@@ -110,7 +111,7 @@ def ask_coze(user_id: str, message: str):
             ):
 
                 logger.error(
-                    f"Coze status failed: {status}"
+                    f"Coze generation failed: {retrieve_data}"
                 )
 
                 return "Ошибка Coze."
@@ -147,53 +148,34 @@ def ask_coze(user_id: str, message: str):
 
 
 
-        answer_parts = []
-
+        # Получаем только финальный ответ ассистента
 
         for item in messages_data.get("data", []):
 
+            if (
+                item.get("role") == "assistant"
+                and item.get("type") == "answer"
+            ):
 
-            logger.info(
-                f"Coze item: {item}"
-            )
-
-
-            if item.get("type") == "answer":
-
-
-                content = item.get(
+                answer = item.get(
                     "content",
                     ""
                 )
 
 
-                if content:
+                if answer:
 
-                    answer_parts.append(
-                        content
+                    logger.info(
+                        f"FINAL ANSWER LENGTH: {len(answer)}"
                     )
 
 
-
-        if answer_parts:
-
-
-            answer = "".join(
-                reversed(answer_parts)
-            )
-
-
-            logger.info(
-                f"FINAL ANSWER LENGTH: {len(answer)}"
-            )
-
-
-            return answer
+                    return answer
 
 
 
         logger.error(
-            "Assistant answer not found"
+            "Assistant answer not found in Coze response"
         )
 
 

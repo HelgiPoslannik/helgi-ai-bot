@@ -1,9 +1,7 @@
 import time
 import requests
-
 from app.config import COZE_TOKEN, COZE_BOT_ID
 from app.logger import logger
-
 
 COZE_CHAT_URL = "https://api.coze.com/v3/chat"
 COZE_RETRIEVE_URL = "https://api.coze.com/v3/chat/retrieve"
@@ -11,13 +9,10 @@ COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/message/list"
 
 
 def ask_coze(user_id: str, message: str):
-
     headers = {
         "Authorization": f"Bearer {COZE_TOKEN}",
         "Content-Type": "application/json"
     }
-
-
     payload = {
         "bot_id": COZE_BOT_ID,
         "user_id": str(user_id),
@@ -31,164 +26,59 @@ def ask_coze(user_id: str, message: str):
             }
         ]
     }
-
-
     try:
-
         response = requests.post(
             COZE_CHAT_URL,
             headers=headers,
             json=payload,
             timeout=60
         )
-
-
         data = response.json()
-
-
-        logger.info(
-            f"Coze RAW response: {data}"
-        )
-
+        logger.info(f"Coze RAW response: {data}")
 
         if data.get("code") != 0:
-
-            logger.error(
-                f"Coze chat error: {data}"
-            )
-
-            return "Ошибка Coze."
-
-
+            return "Ошибка Coze"
 
         chat_id = data["data"]["id"]
-
         conversation_id = data["data"]["conversation_id"]
 
-
-
-        # Ждём завершения генерации
-
-        for i in range(15):
-
+        # ждём завершения генерации
+        for _ in range(15):
             time.sleep(2)
-
-
             retrieve = requests.get(
                 COZE_RETRIEVE_URL,
                 headers=headers,
-                params={
-                    "conversation_id": conversation_id,
-                    "chat_id": chat_id
-                },
-                timeout=60
+                params={"conversation_id": conversation_id, "chat_id": chat_id}
             )
-
-
             retrieve_data = retrieve.json()
+            logger.info(f"Coze retrieve: {retrieve_data}")
 
-
-            logger.info(
-                f"Coze retrieve {i+1}: {retrieve_data}"
-            )
-
-
-            status = (
-                retrieve_data
-                .get("data", {})
-                .get("status")
-            )
-
-
+            status = retrieve_data.get("data", {}).get("status")
             if status == "completed":
-
                 break
-
-
-            if status in (
-                "failed",
-                "requires_action"
-            ):
-
-                logger.error(
-                    f"Coze generation failed: {retrieve_data}"
-                )
-
+            if status in ("failed", "requires_action"):
+                logger.error(f"Coze chat ended with status={status}")
                 return "Ошибка Coze."
-
-
 
         messages = requests.get(
             COZE_MESSAGE_URL,
             headers=headers,
-            params={
-                "conversation_id": conversation_id,
-                "chat_id": chat_id
-            },
-            timeout=60
+            params={"conversation_id": conversation_id, "chat_id": chat_id}
         )
-
-
         messages_data = messages.json()
+        logger.info(f"Coze messages: {messages_data}")
 
+        answer_parts = [
+            item.get("content", "")
+            for item in messages_data.get("data", [])
+            if item.get("type") == "answer"
+        ]
 
-        logger.info(
-            f"Coze messages: {messages_data}"
-        )
-
-
-
-        if messages_data.get("code") != 0:
-
-            logger.error(
-                f"Coze messages error: {messages_data}"
-            )
-
-            return "Ответ не получен."
-
-
-
-        # Получаем только финальный ответ ассистента
-
-        for item in messages_data.get("data", []):
-
-            if (
-                item.get("role") == "assistant"
-                and item.get("type") == "answer"
-            ):
-
-                answer = item.get(
-                    "content",
-                    ""
-                )
-
-
-                if answer:
-
-                    logger.info(
-                        f"FINAL ANSWER LENGTH: {len(answer)}"
-                    )
-
-
-                    return answer
-
-
-
-        logger.error(
-            "Assistant answer not found in Coze response"
-        )
-
+        if answer_parts:
+            return "".join(reversed(answer_parts))
 
         return "Ответ не получен."
 
-
-
     except Exception as error:
-
-
-        logger.error(
-            f"Coze exception: {error}"
-        )
-
-
+        logger.error(f"Coze error: {error}")
         return "Ошибка Coze."

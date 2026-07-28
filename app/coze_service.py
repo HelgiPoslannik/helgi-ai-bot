@@ -9,11 +9,13 @@ COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/message/list"
 
 # Хранилище сессий в оперативной памяти (user_id -> conversation_id).
 # При перезапуске сервера на Railway память очистится.
-# Для долгосрочного хранения лучше использовать Redis или БД (PostgreSQL/SQLite).
 USER_CONVERSATIONS = {}
 
 
-def ask_coze(user_id: str, message: str):
+def ask_coze(user_id: str | int, message: str) -> str:
+    """
+    Отправляет сообщение в Coze API, сохраняя контекст диалога для пользователя.
+    """
     headers = {
         "Authorization": f"Bearer {COZE_TOKEN}",
         "Content-Type": "application/json"
@@ -47,18 +49,24 @@ def ask_coze(user_id: str, message: str):
             timeout=60
         )
         data = response.json()
-        logger.info(f"Coze RAW response: {data}")
+        logger.info(f"Coze RAW response for user {user_id_str}: {data}")
 
         if data.get("code") != 0:
-            return "Ошибка Coze"
+            logger.error(f"Coze API Error Code: {data.get('code')}, msg: {data.get('msg')}")
+            return "Произошла ошибка при обращении к ИИ. Попробуйте ещё раз."
 
-        chat_id = data["data"]["id"]
-        conversation_id = data["data"]["conversation_id"]
+        chat_data = data.get("data", {}) or {}
+        chat_id = chat_data.get("id")
+        conversation_id = chat_data.get("conversation_id")
+
+        if not chat_id or not conversation_id:
+            logger.error(f"Missing chat_id or conversation_id in response for user {user_id_str}: {data}")
+            return "Ошибка инициализации диалога."
 
         # Сохраняем conversation_id для следующих запросов пользователя
         USER_CONVERSATIONS[user_id_str] = conversation_id
 
-        # 2. УБИРАЕМ ОБРЫВЫ: увеличиваем таймаут до 60 секунд (30 попыток по 2 сек)
+        # 2. ОЖИДАНИЕ ЗАВЕРШЕНИЯ ГЕНЕРАЦИИ (30 попыток по 2 секунды = 60 секунд)
         is_completed = False
         for _ in range(30):
             time.sleep(2)
@@ -70,19 +78,19 @@ def ask_coze(user_id: str, message: str):
             )
             retrieve_data = retrieve.json()
             status = retrieve_data.get("data", {}).get("status")
-            logger.info(f"Coze status: {status}")
+            logger.info(f"Coze status for user {user_id_str}: {status}")
 
             if status == "completed":
                 is_completed = True
                 break
             if status in ("failed", "requires_action"):
-                logger.error(f"Coze chat ended with status={status}")
-                return "Ошибка генерации ответа."
+                logger.error(f"Coze chat ended with status={status} for user {user_id_str}")
+                return "Не удалось сгенерировать ответ. Попробуйте повторить запрос."
 
-        # Если за 60 секунд генерация не завершилась — не забираем обрубок!
+        # Если за 60 секунд генерация не завершилась
         if not is_completed:
-            logger.warning(f"Coze timeout for chat_id={chat_id}")
-            return "Запрос занимает слишком много времени. Попробуйте повторить через несколько секунд."
+            logger.warning(f"Coze timeout for chat_id={chat_id}, user={user_id_str}")
+            return "Генерация ответа занимает слишком много времени. Попробуйте повторить через несколько секунд."
 
         # 3. ПОЛУЧЕНИЕ ПОЛНОГО ОТВЕТА
         messages = requests.get(
@@ -92,20 +100,34 @@ def ask_coze(user_id: str, message: str):
             timeout=10
         )
         messages_data = messages.json()
-        logger.info(f"Coze messages: {messages_data}")
-
+        
         # Фильтруем сообщения именно текущего chat_id с типом answer
+        msg_list = messages_data.get("data") or []
         answer_parts = [
             item.get("content", "")
-            for item in messages_data.get("data", [])
+            for item in msg_list
             if item.get("type") == "answer" and item.get("chat_id") == chat_id
         ]
 
         if answer_parts:
             return "".join(answer_parts)
 
-        return "Ответ не получен."
+        logger.warning(f"No answer parts found for user {user_id_str}, chat_id {chat_id}")
+        return "Не удалось получить сформированный ответ."
 
     except Exception as error:
-        logger.error(f"Coze error: {error}")
-        return "Ошибка соединения с сервисом."
+        logger.error(f"Coze request error for user {user_id_str}: {error}")
+        return "Ошибка соединения с сервером ИИ."
+
+
+def reset_conversation(user_id: str | int) -> bool:
+    """
+    Сбрасывает историю диалога конкретного пользователя.
+    Возвращает True, если контекст был успешно удален.
+    """
+    user_id_str = str(user_id)
+    if user_id_str in USER_CONVERSATIONS:
+        del USER_CONVERSATIONS[user_id_str]
+        logger.info(f"Conversation reset for user {user_id_str}")
+        return True
+    return False

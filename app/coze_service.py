@@ -68,14 +68,28 @@ def ask_coze(user_id: str, message: str):
         messages_data = messages.json()
         logger.info(f"Coze messages: {messages_data}")
 
-        answer_parts = [
-            item.get("content", "")
-            for item in messages_data.get("data", [])
-            if item.get("type") == "answer"
-        ]
+                answer_parts = []
+
+        for item in messages_data.get("data", []):
+
+            if item.get("type") == "answer":
+
+                content = item.get("content")
+
+                if content:
+                    answer_parts.append(content)
+
 
         if answer_parts:
-            return "".join(reversed(answer_parts))
+
+            answer = "".join(answer_parts)
+
+            logger.info(
+                f"FINAL ANSWER LENGTH: {len(answer)}"
+            )
+
+            return answer
+
 
         return "Ответ не получен."
 

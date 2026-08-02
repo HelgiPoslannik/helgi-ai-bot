@@ -1,5 +1,7 @@
 import time
 import requests
+import sqlite3
+import os
 from app.config import COZE_TOKEN, COZE_BOT_ID
 from app.logger import logger
 
@@ -7,10 +9,28 @@ COZE_CHAT_URL = "https://api.coze.com/v3/chat"
 COZE_RETRIEVE_URL = "https://api.coze.com/v3/chat/retrieve"
 COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/message/list"
 
-# Хранилище сессий в оперативной памяти (user_id -> conversation_id).
-# При перезапуске сервера на Railway память очистится.
-USER_CONVERSATIONS = {}
+# ==========================================
+# НАСТРОЙКА БАЗЫ ДАННЫХ ДЛЯ ПАМЯТИ
+# ==========================================
+# Указываем путь к базе данных. На Railway это будет папка /data (постоянный диск)
+DB_DIR = "/data"
+# Если папки /data нет (например, сервер еще не настроен), создаем базу в текущей папке
+if not os.path.exists(DB_DIR):
+    DB_DIR = "."
+    
+DB_PATH = os.path.join(DB_DIR, "conversations.db")
 
+# Создаем или подключаем базу данных
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS memory (
+        user_id TEXT PRIMARY KEY,
+        conversation_id TEXT
+    )
+""")
+conn.commit()
+# ==========================================
 
 def ask_coze(user_id: str | int, message: str) -> str:
     """
@@ -37,9 +57,11 @@ def ask_coze(user_id: str | int, message: str) -> str:
         ]
     }
     
-    # 1. СОХРАНЕНИЕ КОНТЕКСТА: передаем conversation_id, если диалог уже велся
-    if user_id_str in USER_CONVERSATIONS:
-        payload["conversation_id"] = USER_CONVERSATIONS[user_id_str]
+    # 1. СОХРАНЕНИЕ КОНТЕКСТА: Читаем из базы
+    cursor.execute("SELECT conversation_id FROM memory WHERE user_id = ?", (user_id_str,))
+    row = cursor.fetchone()
+    if row:
+        payload["conversation_id"] = row[0]
 
     try:
         response = requests.post(
@@ -63,8 +85,12 @@ def ask_coze(user_id: str | int, message: str) -> str:
             logger.error(f"Missing chat_id or conversation_id in response for user {user_id_str}: {data}")
             return "Ошибка инициализации диалога."
 
-        # Сохраняем conversation_id для следующих запросов пользователя
-        USER_CONVERSATIONS[user_id_str] = conversation_id
+        # Записываем новый или обновляем старый conversation_id в базу
+        cursor.execute(
+            "INSERT OR REPLACE INTO memory (user_id, conversation_id) VALUES (?, ?)", 
+            (user_id_str, conversation_id)
+        )
+        conn.commit()
 
         # 2. ОЖИДАНИЕ ЗАВЕРШЕНИЯ ГЕНЕРАЦИИ (30 попыток по 2 секунды = 60 секунд)
         is_completed = False
@@ -123,11 +149,12 @@ def ask_coze(user_id: str | int, message: str) -> str:
 def reset_conversation(user_id: str | int) -> bool:
     """
     Сбрасывает историю диалога конкретного пользователя.
-    Возвращает True, если контекст был успешно удален.
     """
     user_id_str = str(user_id)
-    if user_id_str in USER_CONVERSATIONS:
-        del USER_CONVERSATIONS[user_id_str]
+    cursor.execute("SELECT 1 FROM memory WHERE user_id = ?", (user_id_str,))
+    if cursor.fetchone():
+        cursor.execute("DELETE FROM memory WHERE user_id = ?", (user_id_str,))
+        conn.commit()
         logger.info(f"Conversation reset for user {user_id_str}")
         return True
     return False

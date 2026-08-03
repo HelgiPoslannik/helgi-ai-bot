@@ -10,41 +10,63 @@ COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/message/list"
 
 # Ключи в Redis будут вида: conv:{user_id} -> conversation_id
 CONV_KEY_PREFIX = "conv:"
-CONV_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 дней, чтобы старые записи не копились вечно
+CONV_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 дней
 
 _redis_client = None
+_redis_broken_logged = False
+
+# Запасной вариант в памяти — используется, если Redis недоступен,
+# чтобы контекст не терялся хотя бы в рамках жизни контейнера (как было раньше).
+_FALLBACK_CONVERSATIONS = {}
 
 
 def get_redis():
     """
-    Ленивая инициализация клиента Redis (создаётся один раз при первом обращении).
+    Ленивая инициализация клиента Redis. Бросает исключение, если REDIS_URL не задан
+    или подключиться не удалось — вызывающий код должен это перехватывать.
     """
     global _redis_client
     if _redis_client is None:
         if not REDIS_URL:
             raise RuntimeError("REDIS_URL не задан в переменных окружения")
-        _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        _redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=3)
+        _redis_client.ping()
     return _redis_client
 
 
-def _get_conversation_id(user_id_str: str) -> str | None:
+def _get_conversation_id(user_id_str: str):
+    global _redis_broken_logged
     try:
-        return get_redis().get(f"{CONV_KEY_PREFIX}{user_id_str}")
+        client = get_redis()
+        value = client.get(f"{CONV_KEY_PREFIX}{user_id_str}")
+        if value:
+            return value
+        # В Redis для этого юзера пусто — на всякий случай проверим fallback
+        return _FALLBACK_CONVERSATIONS.get(user_id_str)
     except Exception as error:
-        logger.error(f"Redis GET error for user {user_id_str}: {error}")
-        return None
+        if not _redis_broken_logged:
+            logger.error(f"Redis недоступен, используется запасная память в процессе: {error}")
+            _redis_broken_logged = True
+        return _FALLBACK_CONVERSATIONS.get(user_id_str)
 
 
 def _set_conversation_id(user_id_str: str, conversation_id: str) -> None:
+    global _redis_broken_logged
+    # Всегда пишем в запасную память — это ничего не стоит и подстраховывает
+    _FALLBACK_CONVERSATIONS[user_id_str] = conversation_id
     try:
-        get_redis().set(f"{CONV_KEY_PREFIX}{user_id_str}", conversation_id, ex=CONV_TTL_SECONDS)
+        client = get_redis()
+        client.set(f"{CONV_KEY_PREFIX}{user_id_str}", conversation_id, ex=CONV_TTL_SECONDS)
     except Exception as error:
-        logger.error(f"Redis SET error for user {user_id_str}: {error}")
+        if not _redis_broken_logged:
+            logger.error(f"Redis недоступен, используется запасная память в процессе: {error}")
+            _redis_broken_logged = True
 
 
 def ask_coze(user_id: str | int, message: str) -> str:
     """
-    Отправляет сообщение в Coze API, сохраняя контекст диалога для пользователя в Redis.
+    Отправляет сообщение в Coze API, сохраняя контекст диалога для пользователя.
+    Приоритет — Redis (переживает рестарты), при его недоступности — память процесса.
     """
     headers = {
         "Authorization": f"Bearer {COZE_TOKEN}",
@@ -95,7 +117,6 @@ def ask_coze(user_id: str | int, message: str) -> str:
             logger.error(f"Missing chat_id or conversation_id in response for user {user_id_str}: {data}")
             return "Ошибка инициализации диалога."
 
-        # Сохраняем conversation_id в Redis — переживёт перезапуск контейнера
         _set_conversation_id(user_id_str, conversation_id)
 
         is_completed = False
@@ -150,15 +171,17 @@ def ask_coze(user_id: str | int, message: str) -> str:
 
 def reset_conversation(user_id: str | int) -> bool:
     """
-    Сбрасывает историю диалога конкретного пользователя (удаляет ключ из Redis).
+    Сбрасывает историю диалога конкретного пользователя (Redis + запасная память).
     """
     user_id_str = str(user_id)
+    had_any = user_id_str in _FALLBACK_CONVERSATIONS
+    _FALLBACK_CONVERSATIONS.pop(user_id_str, None)
     try:
         deleted = get_redis().delete(f"{CONV_KEY_PREFIX}{user_id_str}")
-        if deleted:
+        if deleted or had_any:
             logger.info(f"Conversation reset for user {user_id_str}")
             return True
         return False
     except Exception as error:
         logger.error(f"Redis DELETE error for user {user_id_str}: {error}")
-        return False
+        return had_any

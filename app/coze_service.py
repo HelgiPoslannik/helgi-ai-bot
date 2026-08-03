@@ -20,9 +20,9 @@ def ask_coze(user_id: str | int, message: str) -> str:
         "Authorization": f"Bearer {COZE_TOKEN}",
         "Content-Type": "application/json"
     }
-    
+
     user_id_str = str(user_id)
-    
+
     payload = {
         "bot_id": COZE_BOT_ID,
         "user_id": user_id_str,
@@ -36,15 +36,18 @@ def ask_coze(user_id: str | int, message: str) -> str:
             }
         ]
     }
-    
-    # 1. СОХРАНЕНИЕ КОНТЕКСТА: передаем conversation_id, если диалог уже велся
+
+    # ВАЖНО: Coze принимает conversation_id ТОЛЬКО как параметр URL (query string),
+    # а не как поле внутри JSON. Это и было причиной потери контекста.
+    query_params = {}
     if user_id_str in USER_CONVERSATIONS:
-        payload["conversation_id"] = USER_CONVERSATIONS[user_id_str]
+        query_params["conversation_id"] = USER_CONVERSATIONS[user_id_str]
 
     try:
         response = requests.post(
             COZE_CHAT_URL,
             headers=headers,
+            params=query_params,
             json=payload,
             timeout=60
         )
@@ -63,10 +66,10 @@ def ask_coze(user_id: str | int, message: str) -> str:
             logger.error(f"Missing chat_id or conversation_id in response for user {user_id_str}: {data}")
             return "Ошибка инициализации диалога."
 
-        # Сохраняем conversation_id для следующих запросов пользователя
+        # Сохраняем conversation_id для следующих запросов этого пользователя
         USER_CONVERSATIONS[user_id_str] = conversation_id
 
-        # 2. ОЖИДАНИЕ ЗАВЕРШЕНИЯ ГЕНЕРАЦИИ (30 попыток по 2 секунды = 60 секунд)
+        # ждём завершения генерации (30 попыток по 2 секунды = 60 секунд)
         is_completed = False
         for _ in range(30):
             time.sleep(2)
@@ -87,12 +90,10 @@ def ask_coze(user_id: str | int, message: str) -> str:
                 logger.error(f"Coze chat ended with status={status} for user {user_id_str}")
                 return "Не удалось сгенерировать ответ. Попробуйте повторить запрос."
 
-        # Если за 60 секунд генерация не завершилась
         if not is_completed:
             logger.warning(f"Coze timeout for chat_id={chat_id}, user={user_id_str}")
             return "Генерация ответа занимает слишком много времени. Попробуйте повторить через несколько секунд."
 
-        # 3. ПОЛУЧЕНИЕ ПОЛНОГО ОТВЕТА
         messages = requests.get(
             COZE_MESSAGE_URL,
             headers=headers,
@@ -100,8 +101,7 @@ def ask_coze(user_id: str | int, message: str) -> str:
             timeout=10
         )
         messages_data = messages.json()
-        
-        # Фильтруем сообщения именно текущего chat_id с типом answer
+
         msg_list = messages_data.get("data") or []
         answer_parts = [
             item.get("content", "")

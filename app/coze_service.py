@@ -1,20 +1,50 @@
 import time
 import requests
-from app.config import COZE_TOKEN, COZE_BOT_ID
+import redis
+from app.config import COZE_TOKEN, COZE_BOT_ID, REDIS_URL
 from app.logger import logger
 
 COZE_CHAT_URL = "https://api.coze.com/v3/chat"
 COZE_RETRIEVE_URL = "https://api.coze.com/v3/chat/retrieve"
 COZE_MESSAGE_URL = "https://api.coze.com/v3/chat/message/list"
 
-# Хранилище сессий в оперативной памяти (user_id -> conversation_id).
-# При перезапуске сервера на Railway память очистится.
-USER_CONVERSATIONS = {}
+# Ключи в Redis будут вида: conv:{user_id} -> conversation_id
+CONV_KEY_PREFIX = "conv:"
+CONV_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 дней, чтобы старые записи не копились вечно
+
+_redis_client = None
+
+
+def get_redis():
+    """
+    Ленивая инициализация клиента Redis (создаётся один раз при первом обращении).
+    """
+    global _redis_client
+    if _redis_client is None:
+        if not REDIS_URL:
+            raise RuntimeError("REDIS_URL не задан в переменных окружения")
+        _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    return _redis_client
+
+
+def _get_conversation_id(user_id_str: str) -> str | None:
+    try:
+        return get_redis().get(f"{CONV_KEY_PREFIX}{user_id_str}")
+    except Exception as error:
+        logger.error(f"Redis GET error for user {user_id_str}: {error}")
+        return None
+
+
+def _set_conversation_id(user_id_str: str, conversation_id: str) -> None:
+    try:
+        get_redis().set(f"{CONV_KEY_PREFIX}{user_id_str}", conversation_id, ex=CONV_TTL_SECONDS)
+    except Exception as error:
+        logger.error(f"Redis SET error for user {user_id_str}: {error}")
 
 
 def ask_coze(user_id: str | int, message: str) -> str:
     """
-    Отправляет сообщение в Coze API, сохраняя контекст диалога для пользователя.
+    Отправляет сообщение в Coze API, сохраняя контекст диалога для пользователя в Redis.
     """
     headers = {
         "Authorization": f"Bearer {COZE_TOKEN}",
@@ -37,11 +67,10 @@ def ask_coze(user_id: str | int, message: str) -> str:
         ]
     }
 
-    # ВАЖНО: Coze принимает conversation_id ТОЛЬКО как параметр URL (query string),
-    # а не как поле внутри JSON. Это и было причиной потери контекста.
     query_params = {}
-    if user_id_str in USER_CONVERSATIONS:
-        query_params["conversation_id"] = USER_CONVERSATIONS[user_id_str]
+    existing_conversation_id = _get_conversation_id(user_id_str)
+    if existing_conversation_id:
+        query_params["conversation_id"] = existing_conversation_id
 
     try:
         response = requests.post(
@@ -66,10 +95,9 @@ def ask_coze(user_id: str | int, message: str) -> str:
             logger.error(f"Missing chat_id or conversation_id in response for user {user_id_str}: {data}")
             return "Ошибка инициализации диалога."
 
-        # Сохраняем conversation_id для следующих запросов этого пользователя
-        USER_CONVERSATIONS[user_id_str] = conversation_id
+        # Сохраняем conversation_id в Redis — переживёт перезапуск контейнера
+        _set_conversation_id(user_id_str, conversation_id)
 
-        # ждём завершения генерации (30 попыток по 2 секунды = 60 секунд)
         is_completed = False
         for _ in range(30):
             time.sleep(2)
@@ -122,12 +150,15 @@ def ask_coze(user_id: str | int, message: str) -> str:
 
 def reset_conversation(user_id: str | int) -> bool:
     """
-    Сбрасывает историю диалога конкретного пользователя.
-    Возвращает True, если контекст был успешно удален.
+    Сбрасывает историю диалога конкретного пользователя (удаляет ключ из Redis).
     """
     user_id_str = str(user_id)
-    if user_id_str in USER_CONVERSATIONS:
-        del USER_CONVERSATIONS[user_id_str]
-        logger.info(f"Conversation reset for user {user_id_str}")
-        return True
-    return False
+    try:
+        deleted = get_redis().delete(f"{CONV_KEY_PREFIX}{user_id_str}")
+        if deleted:
+            logger.info(f"Conversation reset for user {user_id_str}")
+            return True
+        return False
+    except Exception as error:
+        logger.error(f"Redis DELETE error for user {user_id_str}: {error}")
+        return False

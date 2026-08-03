@@ -41,7 +41,6 @@ def _get_conversation_id(user_id_str: str):
         value = client.get(f"{CONV_KEY_PREFIX}{user_id_str}")
         if value:
             return value
-        # В Redis для этого юзера пусто — на всякий случай проверим fallback
         return _FALLBACK_CONVERSATIONS.get(user_id_str)
     except Exception as error:
         if not _redis_broken_logged:
@@ -52,7 +51,6 @@ def _get_conversation_id(user_id_str: str):
 
 def _set_conversation_id(user_id_str: str, conversation_id: str) -> None:
     global _redis_broken_logged
-    # Всегда пишем в запасную память — это ничего не стоит и подстраховывает
     _FALLBACK_CONVERSATIONS[user_id_str] = conversation_id
     try:
         client = get_redis()

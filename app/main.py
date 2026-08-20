@@ -59,7 +59,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(
-            "❌ Нет активной подписки."
+            "🛑 *Доступ к ИИ-ассистенту закрыт*
+
+Чтобы пользоваться карманным психологом, нужна подписка на закрытый клуб.
+
+У тебя есть час после оформления подписки на тест (можно отменить в любой момент).
+
+👉 [Оформить подписку на 1 час и получить доступ] https://t.me/tribute/app?startapp=s11Qp."
         )
 
 
@@ -69,7 +75,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await check_subscription(user.id):
         await update.message.reply_text(
-            "❌ Доступ закрыт. Нужна активная подписка."
+            "🛑 *Доступ к ИИ-ассистенту закрыт*
+
+Чтобы пользоваться карманным психологом, нужна подписка на закрытый клуб.
+
+У тебя есть час после оформления подписки на тест (можно отменить в любой момент).
+
+👉 [Оформить подписку на 1 час и получить доступ] https://t.me/tribute/app?startapp=s11Qp"
         )
         return
 
